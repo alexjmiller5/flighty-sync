@@ -20,6 +20,7 @@ def test_dry_run_requires_no_credential_and_writes_no_source(tmp_path, monkeypat
 
 
 def test_run_requires_export_baseline_before_credential_access(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(subprocess, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0))
     path = source(tmp_path)
     monkeypatch.setenv("JOB_STATE_DIR", str(tmp_path / "state"))
     main(["configure", "--source", str(path), "--hub-url", "https://example.test"])
