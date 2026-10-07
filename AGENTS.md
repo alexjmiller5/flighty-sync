@@ -46,3 +46,7 @@ creation is insert-only, edits use revisions, and source disappearance never
 hard-deletes destination data. Local observation does not prove iCloud freshness.
 
 Public repository, no analytics. Version 0.1.0 is pre-release.
+
+A run requests a native background launch of Flighty before reading its local
+cache, so CloudKit can resume after reboot. Inspect and doctor do not launch
+apps. Hydration completion is not inferred from launch or a populated cache.

@@ -93,3 +93,9 @@ applies. Credentials are never accepted in command-line arguments.
 
 `just test`, `just check`, `just fmt`, and `nix build`. Tests use synthetic
 SQLite sources and an in-memory HTTP service; no personal data belongs in Git.
+
+Each scheduled run opens Flighty in the background using macOS `open -g` before
+reading its cache. Finish native Flighty enrollment first. CloudKit hydration is
+owned by Flighty and may finish after that snapshot; the next run picks up later
+changes. A successful mirror verifies local data and retained storage, not iCloud
+freshness. Confirm propagation after a known change on another device.

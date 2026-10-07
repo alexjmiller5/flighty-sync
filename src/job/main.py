@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -100,6 +101,14 @@ def main(argv=None):
             store_token(account(settings.hub_url), token)
             print(json.dumps({"enrolled": True}))
             return 0
+        if args.command == "run":
+            # Flighty owns CloudKit hydration; a native background launch resumes it after reboot.
+            subprocess.run(
+                ["/usr/bin/open", "-g", "-a", "Flighty"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         rows = read_flights(settings.source)
         if not rows:
             raise SyncError("Source is empty; complete Flighty enrollment and hydration.")
