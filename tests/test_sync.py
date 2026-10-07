@@ -156,3 +156,25 @@ def test_refuse_redirect_and_non_https():
     )
     with pytest.raises(httpx.HTTPStatusError):
         hub.post("/v1/rows/pull", {})
+
+
+def test_existing_foreign_identity_is_not_overwritten():
+    service, hub = setup()
+    service.rows["flight"] = dict(
+        row(), source_id="different", updated_at="x", hub_at="y", deleted_at=None
+    )
+    with pytest.raises(SyncError):
+        sync_flights(hub, [row()], table="flights", prefix="raw/flighty/")
+    assert not any(c[1].endswith("/patch") for c in service.calls)
+
+
+def test_retained_file_mismatch_fails():
+    service, hub = setup()
+    original = hub.client
+    hub.client = httpx.Client(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"corrupt")),
+    )
+    original.close()
+    with pytest.raises(SyncError, match="readback"):
+        sync_flights(hub, [row()], table="flights", prefix="raw/flighty/")

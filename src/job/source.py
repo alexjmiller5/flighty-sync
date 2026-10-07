@@ -1,5 +1,6 @@
 """Read Flighty's private schema without modifying its database or app state."""
 
+import base64
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -9,6 +10,28 @@ from zoneinfo import ZoneInfo
 
 class SourceError(RuntimeError):
     pass
+
+
+class SourceRow(dict):
+    """Honor SQLite column-name casing while preserving original source keys."""
+
+    def __getitem__(self, key):
+        for actual in self:
+            if actual.casefold() == key.casefold():
+                return super().__getitem__(actual)
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+def encode_binary(value):
+    if isinstance(value, bytes):
+        return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
+    raise TypeError("Unsupported source value")
 
 
 REQUIRED = {
@@ -26,7 +49,7 @@ REQUIRED = {
         "number",
         "airlineId",
         "departureAirportId",
-        "scheduledarrivalAirportId",
+        "scheduledArrivalAirportId",
         "departureScheduleGateOriginal",
         "isCancelled",
         "deleted",
@@ -57,13 +80,14 @@ def read_flights(path: Path) -> list[dict]:
             c.execute("PRAGMA query_only=ON")
             c.execute("BEGIN")
             for table, required in REQUIRED.items():
-                actual = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
-                if not required <= actual:
+                actual = {r["name"].casefold() for r in c.execute(f"PRAGMA table_info({table})")}
+                missing = {name for name in required if name.casefold() not in actual}
+                if missing:
                     raise SourceError(
-                        f"Unsupported Flighty schema: {table} missing {sorted(required - actual)}"
+                        f"Unsupported Flighty schema: {table} missing {sorted(missing)}"
                     )
             users = [
-                dict(r)
+                SourceRow(r)
                 for r in c.execute(
                     "SELECT * FROM UserFlight WHERE deleted IS NULL AND isMyFlight=1 AND isRandom=0 AND importSource IS NOT 'CONNECTED_FRIEND'"
                 )
@@ -77,7 +101,7 @@ def read_flights(path: Path) -> list[dict]:
                 row = c.execute(f"SELECT * FROM {table} WHERE id=?", (identifier,)).fetchone()
                 if row is None:
                     raise SourceError(f"Incomplete Flighty reference in {table}")
-                return dict(row)
+                return SourceRow(row)
 
             for identifier, memberships in sorted(grouped.items()):
                 owners = {(r["userId"], r["accountId"]) for r in memberships}
@@ -88,9 +112,9 @@ def read_flights(path: Path) -> list[dict]:
                     continue
                 airline = one("Airline", f["airlineId"])
                 dep = one("Airport", f["departureAirportId"])
-                arr = one("Airport", f["scheduledarrivalAirportId"])
+                arr = one("Airport", f["scheduledArrivalAirportId"])
                 tickets = [
-                    dict(r)
+                    SourceRow(r)
                     for r in c.execute(
                         "SELECT * FROM Ticket WHERE flightId=? AND userId=? AND accountId=? AND deleted IS NULL",
                         (identifier, *next(iter(owners))),
@@ -105,9 +129,12 @@ def read_flights(path: Path) -> list[dict]:
                 payload = {
                     "flight": f,
                     "user_flights": sorted(
-                        memberships, key=lambda r: json.dumps(r, sort_keys=True)
+                        memberships,
+                        key=lambda r: json.dumps(r, sort_keys=True, default=encode_binary),
                     ),
-                    "tickets": sorted(tickets, key=lambda r: json.dumps(r, sort_keys=True)),
+                    "tickets": sorted(
+                        tickets, key=lambda r: json.dumps(r, sort_keys=True, default=encode_binary)
+                    ),
                     "airline": airline,
                     "departure_airport": dep,
                     "arrival_airport": arr,
@@ -140,7 +167,7 @@ def read_flights(path: Path) -> list[dict]:
                         if len(tickets) > 1
                         else None,
                         "source_payload": json.dumps(
-                            payload, sort_keys=True, separators=(",", ":")
+                            payload, sort_keys=True, separators=(",", ":"), default=encode_binary
                         ),
                         "source_state": "present",
                         "travel_status": "unverified",

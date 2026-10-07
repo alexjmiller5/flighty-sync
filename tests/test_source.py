@@ -10,9 +10,9 @@ def source(tmp_path):
     c = sqlite3.connect(path)
     c.executescript("""
     CREATE TABLE UserFlight(accountId TEXT,userId TEXT,flightId TEXT,deleted REAL,isMyFlight INT,isRandom INT,importSource TEXT);
-    CREATE TABLE Flight(id TEXT,number TEXT,airlineId TEXT,departureAirportId TEXT,scheduledarrivalAirportId TEXT,departureScheduleGateOriginal INT,departureScheduleGateActual INT,arrivalScheduleGateOriginal INT,arrivalScheduleGateActual INT,isCancelled INT,deleted REAL,lastUpdated INT);
+    CREATE TABLE Flight(id TEXT,number TEXT,airlineId TEXT,departureAirportId TEXT,scheduledArrivalAirportId TEXT,departureScheduleGateOriginal INT,departureScheduleGateActual INT,arrivalScheduleGateOriginal INT,arrivalScheduleGateActual INT,isCancelled INT,deleted REAL,lastUpdated INT);
     CREATE TABLE Airline(id TEXT,iata TEXT,icao TEXT,name TEXT);
-    CREATE TABLE Airport(id TEXT,iata TEXT,timezoneIdentifier TEXT);
+    CREATE TABLE Airport(id TEXT,iata TEXT,timeZoneIdentifier TEXT);
     CREATE TABLE Ticket(accountId TEXT,flightId TEXT,userId TEXT,deleted REAL,seatNumber TEXT,pnr TEXT);
     INSERT INTO Airline VALUES ('airline','ZZ',NULL,'Fixture Air');
     INSERT INTO Airport VALUES ('origin','AAA','America/New_York'),('destination','BBB','Europe/London');
@@ -73,3 +73,18 @@ def test_fail_on_missing_schema_and_do_not_create_missing_database(tmp_path):
         c.execute("CREATE TABLE unrelated(id TEXT)")
     with pytest.raises(SourceError, match="schema"):
         read_flights(path)
+
+
+def test_binary_source_fields_are_retained_losslessly(tmp_path):
+    import base64
+    import json
+
+    path = source(tmp_path)
+    binary = bytes([0, 255, 17, 128])
+    with sqlite3.connect(path) as c:
+        c.execute("ALTER TABLE Flight ADD COLUMN arrivalWeatherWarnings BLOB")
+        c.execute("UPDATE Flight SET arrivalWeatherWarnings=?", (binary,))
+    payload = json.loads(read_flights(path)[0]["source_payload"])
+    retained = payload["flight"]["arrivalWeatherWarnings"]
+    assert retained["encoding"] == "base64"
+    assert base64.b64decode(retained["data"]) == binary

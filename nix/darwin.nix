@@ -75,19 +75,19 @@ in
 
     stateDir = lib.mkOption {
       type = lib.types.str;
-      default = "/Users/${cfg.user}/Library/Application Support/flighty-sync"; 
-      defaultText = lib.literalExpression ''"/Users/''${user}/Library/Application Support/flighty-sync"'';
+      default = "/Users/${cfg.user}/Library/Application Support/FlightySync"; 
+      defaultText = lib.literalExpression ''"/Users/''${user}/Library/Application Support/FlightySync"'';
       description = "Writable dir for state, logs, sessions - exported to the job as JOB_STATE_DIR.";
     };
 
     hour = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 23;
       default = 3;
       description = "Hour (0-23, local time) the job fires.";
     };
 
     minute = lib.mkOption {
-      type = lib.types.int;
+      type = lib.types.ints.between 0 59;
       default = 30;
       description = "Minute the job fires.";
     };

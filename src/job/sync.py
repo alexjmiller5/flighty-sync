@@ -141,6 +141,8 @@ def sync_flights(hub, rows, *, table, prefix):
             counts["inserted"] += 1
             expected[row["id"]] = row
             continue
+        if old.get("source_id") != row["source_id"]:
+            raise SyncError("Existing row has a conflicting source identity.")
         # This is a user-owned assessment, initialized only when creating a row.
         changes = {
             k: v
