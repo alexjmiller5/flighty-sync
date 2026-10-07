@@ -47,6 +47,11 @@ hard-deletes destination data. Local observation does not prove iCloud freshness
 
 Public repository, no analytics. Version 0.1.0 is pre-release.
 
+Read both Flight/UserFlight and ManualFlight/UserManualFlight when available.
+Manual ownership must match accountId, and missing manual carrier/number/time
+values stay null. Date-only midnight markers retain their raw timestamp but do
+not become a claimed scheduled departure time.
+
 A run requests a native background launch of Flighty before reading its local
 cache, so CloudKit can resume after reboot. Inspect and doctor do not launch
 apps. Hydration completion is not inferred from launch or a populated cache.

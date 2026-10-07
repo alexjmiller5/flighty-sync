@@ -72,6 +72,10 @@ source payload and archive reference. Source fields refresh; user-maintained
 Missing source rows are retained with `source_state=missing`; tombstones are
 never resurrected. Multiple same-owner tickets are retained in the raw payload,
 with an explicit warning and no guessed seat. Friends' tickets are excluded.
+Both searched flights and manual flight-log entries are included. Manual entries
+retain unknown carrier, number and times as null. A manual midnight departure
+with no arrival or actual departure time is treated as a date marker, with an
+explicit warning and its original timestamp retained in the raw snapshot.
 
 Life Data operators create/catalog the destination through supported user
 interfaces, not by changing the Life Data repository. `txns` can be a union

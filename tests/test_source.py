@@ -88,3 +88,63 @@ def test_binary_source_fields_are_retained_losslessly(tmp_path):
     retained = payload["flight"]["arrivalWeatherWarnings"]
     assert retained["encoding"] == "base64"
     assert base64.b64decode(retained["data"]) == binary
+
+
+def manual_source(tmp_path):
+    path = source(tmp_path)
+    with sqlite3.connect(path) as c:
+        c.executescript("""
+        CREATE TABLE ManualFlight(accountId TEXT,id TEXT,number TEXT,airlineId TEXT,departureAirportId TEXT,scheduledArrivalAirportId TEXT,departureScheduleGateOriginal INT,lastKnownDepartureDate INT,isCancelled INT,deleted REAL);
+        CREATE TABLE UserManualFlight(accountId TEXT,userId TEXT,flightId TEXT,deleted REAL,isMyFlight INT,importSource TEXT);
+        INSERT INTO ManualFlight VALUES ('account','manual',NULL,NULL,'origin','destination',1704085200,1704085200,0,NULL);
+        INSERT INTO UserManualFlight VALUES ('account','owner','manual',NULL,1,'MANUAL');
+        """)
+    return path
+
+
+def test_manual_date_only_flight_is_retained_without_invented_details(tmp_path):
+    import json
+
+    path = manual_source(tmp_path)
+    before = path.read_bytes()
+    rows = read_flights(path)
+    assert len(rows) == 2
+    row = next(r for r in rows if r["source_id"] == "manual")
+    assert row["flight_number"] is None
+    assert row["airline_name"] is None
+    assert row["departure_date"] == "2024-01-01"
+    assert row["departure_scheduled_at"] is None
+    assert row["arrival_scheduled_at"] is None
+    assert row["departure_airport"] == "AAA"
+    assert row["arrival_airport"] == "BBB"
+    assert "Manual" in row["source_warning"]
+    assert json.loads(row["source_payload"])["flight"]["lastKnownDepartureDate"] == 1704085200
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("change", ["deleted=1", "isMyFlight=0", "importSource='CONNECTED_FRIEND'"])
+def test_manual_friend_deleted_nonpersonal_are_excluded(tmp_path, change):
+    path = manual_source(tmp_path)
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE UserManualFlight SET " + change)
+    assert [r["source_id"] for r in read_flights(path)] == ["flight"]
+
+
+def test_manual_owner_reference_must_match_account(tmp_path):
+    path = manual_source(tmp_path)
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE ManualFlight SET accountId='other'")
+    with pytest.raises(SourceError, match="reference"):
+        read_flights(path)
+
+
+def test_manual_known_carrier_number_and_time_are_preserved(tmp_path):
+    path = manual_source(tmp_path)
+    with sqlite3.connect(path) as c:
+        c.execute(
+            "UPDATE ManualFlight SET number='ZZ 42',airlineId='airline',departureScheduleGateOriginal=1704155400"
+        )
+    row = next(r for r in read_flights(path) if r["source_id"] == "manual")
+    assert row["flight_number"] == "ZZ 42"
+    assert row["airline_iata"] == "ZZ"
+    assert row["departure_scheduled_at"] == "2024-01-02T00:30:00.000Z"

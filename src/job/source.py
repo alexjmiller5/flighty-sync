@@ -59,6 +59,11 @@ REQUIRED = {
     "Ticket": {"accountId", "flightId", "userId", "deleted", "seatNumber", "pnr"},
 }
 
+MANUAL_REQUIRED = {
+    "ManualFlight": REQUIRED["Flight"] | {"accountId", "lastKnownDepartureDate"},
+    "UserManualFlight": REQUIRED["UserFlight"] - {"isRandom"},
+}
+
 
 def stamp(value):
     return (
@@ -79,7 +84,10 @@ def read_flights(path: Path) -> list[dict]:
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA query_only=ON")
             c.execute("BEGIN")
-            for table, required in REQUIRED.items():
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            manual = bool(tables & MANUAL_REQUIRED.keys())
+            required_tables = REQUIRED | (MANUAL_REQUIRED if manual else {})
+            for table, required in required_tables.items():
                 actual = {r["name"].casefold() for r in c.execute(f"PRAGMA table_info({table})")}
                 missing = {name for name in required if name.casefold() not in actual}
                 if missing:
@@ -94,7 +102,13 @@ def read_flights(path: Path) -> list[dict]:
             ]
             grouped = {}
             for row in users:
-                grouped.setdefault(row["flightId"], []).append(row)
+                grouped.setdefault(("Flight", row["flightId"]), []).append(row)
+            if manual:
+                for raw in c.execute(
+                    "SELECT * FROM UserManualFlight WHERE deleted IS NULL AND isMyFlight=1 AND importSource IS NOT 'CONNECTED_FRIEND'"
+                ):
+                    row = SourceRow(raw)
+                    grouped.setdefault(("ManualFlight", row["flightId"]), []).append(row)
             result = []
 
             def one(table, identifier):
@@ -103,14 +117,20 @@ def read_flights(path: Path) -> list[dict]:
                     raise SourceError(f"Incomplete Flighty reference in {table}")
                 return SourceRow(row)
 
-            for identifier, memberships in sorted(grouped.items()):
+            for (table, identifier), memberships in sorted(grouped.items()):
                 owners = {(r["userId"], r["accountId"]) for r in memberships}
                 if len(owners) != 1:
                     raise SourceError("Ambiguous ownership in personal flight list")
-                f = one("Flight", identifier)
+                f = one(table, identifier)
+                if table == "ManualFlight" and f["accountId"] != next(iter(owners))[1]:
+                    raise SourceError("Incomplete Flighty owner reference in ManualFlight")
+                if any(r["id"] == identifier for r in result):
+                    raise SourceError("Ambiguous source identity across Flighty tables")
                 if f["deleted"] is not None:
                     continue
-                airline = one("Airline", f["airlineId"])
+                airline = one("Airline", f["airlineId"]) if f["airlineId"] is not None else {}
+                if table == "Flight" and not airline:
+                    raise SourceError("Incomplete Flighty reference in Airline")
                 dep = one("Airport", f["departureAirportId"])
                 arr = one("Airport", f["scheduledArrivalAirportId"])
                 tickets = [
@@ -122,11 +142,35 @@ def read_flights(path: Path) -> list[dict]:
                 ]
                 ticket = tickets[0] if len(tickets) == 1 else {}
                 original = f["departureScheduleGateOriginal"]
+                if table == "ManualFlight" and original is None:
+                    original = f["lastKnownDepartureDate"]
                 if not isinstance(original, (int, float)) or original <= 0:
                     raise SourceError("Missing or invalid original departure timestamp")
                 if f["isCancelled"] not in (0, 1):
                     raise SourceError("Unknown cancellation state")
+                local_departure = datetime.fromtimestamp(
+                    original, ZoneInfo(dep["timezoneIdentifier"])
+                )
+                date_only = (
+                    table == "ManualFlight"
+                    and local_departure.hour
+                    == local_departure.minute
+                    == local_departure.second
+                    == 0
+                    and f.get("arrivalScheduleGateOriginal") is None
+                    and f.get("departureScheduleGateActual") is None
+                )
+                warnings = []
+                if table == "ManualFlight":
+                    warnings.append("Manual Flighty record; unknown details remain unset.")
+                if date_only:
+                    warnings.append(
+                        "Midnight date marker retained in source; departure time unknown."
+                    )
+                if len(tickets) > 1:
+                    warnings.append("Multiple own tickets; see retained source.")
                 payload = {
+                    "source_table": table,
                     "flight": f,
                     "user_flights": sorted(
                         memberships,
@@ -143,29 +187,23 @@ def read_flights(path: Path) -> list[dict]:
                     {
                         "id": identifier,
                         "source_id": identifier,
-                        "flight_number": str(f["number"]),
-                        "airline_iata": airline["iata"],
-                        "airline_icao": airline["icao"],
-                        "airline_name": airline["name"],
+                        "flight_number": str(f["number"]) if f["number"] is not None else None,
+                        "airline_iata": airline.get("iata"),
+                        "airline_icao": airline.get("icao"),
+                        "airline_name": airline.get("name"),
                         "departure_airport": dep["iata"],
                         "arrival_airport": arr["iata"],
-                        "departure_date": datetime.fromtimestamp(
-                            original, ZoneInfo(dep["timezoneIdentifier"])
-                        )
-                        .date()
-                        .isoformat(),
+                        "departure_date": local_departure.date().isoformat(),
                         "departure_timezone": dep["timezoneIdentifier"],
                         "arrival_timezone": arr["timezoneIdentifier"],
-                        "departure_scheduled_at": stamp(original),
+                        "departure_scheduled_at": None if date_only else stamp(original),
                         "arrival_scheduled_at": stamp(f.get("arrivalScheduleGateOriginal")),
                         "departure_actual_at": stamp(f.get("departureScheduleGateActual")),
                         "arrival_actual_at": stamp(f.get("arrivalScheduleGateActual")),
                         "cancelled": int(f["isCancelled"]),
                         "seat": ticket.get("seatNumber"),
                         "booking_reference": ticket.get("pnr"),
-                        "source_warning": "Multiple own tickets; see retained source."
-                        if len(tickets) > 1
-                        else None,
+                        "source_warning": " ".join(warnings) or None,
                         "source_payload": json.dumps(
                             payload, sort_keys=True, separators=(",", ":"), default=encode_binary
                         ),
