@@ -72,11 +72,22 @@ URL. Changing either requires another export comparison. A source shrink over
 Raw snapshots are content-addressed beneath dated archive keys. The `flights`
 projection includes source IDs, carrier/route/time/seat details, cancellation,
 source payload and archive reference. Source fields refresh; user-maintained
-`travel_status`, trip references and purchase links do not. Initial
+`travel_status`, trip references, notes and purchase links do not. Initial
 `travel_status=unverified` means presence in Flighty does not establish boarding.
-Missing source rows are retained with `source_state=missing`; tombstones are
-never resurrected. Multiple same-owner tickets are retained in the raw payload,
-with an explicit warning and no guessed seat. Friends' tickets are excluded.
+
+Flighty is the source of truth; remove a flight in Flighty, not in the destination.
+A flight absent from a complete source read is soft-deleted (`deleted_at` set,
+`source_state=missing`). A flight that reappears with the same Flighty ID is
+restored with fresh source fields, including one deleted by hand in the
+destination while still in Flighty. User-maintained fields survive both, and
+retained snapshots keep the history. A read without Flighty's manual-flight tables
+is incomplete: absent flights are marked `source_state=missing` and stay live. A
+run that would delete more than `max_missing_fraction` (25%) of live destination
+rows stops before any row write for review. A failed source read or incomplete
+destination pagination writes nothing; empty sources are rejected.
+
+Multiple same-owner tickets are retained in the raw payload, with an explicit
+warning and no guessed seat. Friends' tickets are excluded.
 Both searched flights and manual flight-log entries are included. Manual entries
 retain unknown carrier, number and times as null. A manual midnight departure
 with no arrival or actual departure time is treated as a date marker, with an
@@ -88,10 +99,12 @@ view with composite identity; purchase links must retain both source and source
 record ID rather than assuming a universal transaction ID. Keep transaction
 links separate so purchases, fees and refunds can all be represented.
 
-The required service APIs are documented by Soma: `/v1/session`, retained
-files, complete paginated row pulls, insert-only creation, and revision-checked
-patches. Failed archives, rejections, schema drift, missing credentials and
-revision conflicts fail visibly. A rerun reconciles partial completed work.
+The required service APIs are documented by Soma: `/v1/session`, retained files,
+complete paginated row pulls, insert-only creation, revision-checked patches,
+and sparse row pushes for delete and restore (patches cannot change
+`deleted_at`; row readback verifies every write). Failed archives, rejections,
+schema drift, missing credentials and revision conflicts fail visibly. A rerun
+reconciles partial completed work.
 
 The default settings/status directory is `~/Library/Application Support/FlightySync`.
 `JOB_STATE_DIR` can override it. No secret is stored there. An explicit

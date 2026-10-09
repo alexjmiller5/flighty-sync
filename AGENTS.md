@@ -42,8 +42,11 @@ local status/configuration. It does not own Soma infrastructure or schema.
 
 Do not log source payloads or tokens. Fixtures are synthetic. Preserve human-owned
 trip, purchase and travel-status fields. Archive readback precedes row writes;
-creation is insert-only, edits use revisions, and source disappearance never
-hard-deletes destination data. Local observation does not prove iCloud freshness.
+creation is insert-only and field edits use revisions. Flighty is the source of
+truth: a flight absent from a complete read is soft-deleted, one that reappears is
+restored, both through sparse pushes checked by readback, never a hard delete.
+An incomplete read (no manual tables) or a shrink over max_missing_fraction of live
+rows deletes nothing. Local observation does not prove iCloud freshness.
 
 Public repository, no analytics. Version 0.1.0 is pre-release.
 

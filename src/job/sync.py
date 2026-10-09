@@ -92,8 +92,15 @@ class Hub:
         if result.get("id") != existing["id"] or not isinstance(result.get("revision"), dict):
             raise SyncError("Invalid patch receipt")
 
+    def push(self, table, row):
+        # Revision-checked patches cannot change deleted_at, so delete and restore are
+        # sparse last-write-wins pushes; the caller's readback detects a lost race.
+        result = self.post("/v1/rows/push", {"table": table, "columns": sorted(row), "rows": [row]})
+        if result.get("rejected"):
+            raise SyncError("Delete or restore rejected; rerun to reconcile.")
 
-def sync_flights(hub, rows, *, table, prefix):
+
+def sync_flights(hub, rows, *, table, prefix, complete=False, max_missing=0.25):
     if not rows or len({r["id"] for r in rows}) != len(rows):
         raise SyncError("Empty or duplicate source snapshot; refusing reconciliation.")
     if not prefix.endswith("/") or any(p in ("", ".", "..") for p in prefix.rstrip("/").split("/")):
@@ -111,12 +118,20 @@ def sync_flights(hub, rows, *, table, prefix):
     fields = set().union(*(r.keys() for r in rows))
     columns = sorted(fields | {"updated_at", "hub_at", "deleted_at", "source_archive_key"})
     existing = hub.pull(table, columns)
+    seen = {r["id"] for r in rows}
+    live = [i for i, old in existing.items() if not old.get("deleted_at")]
+    absent = [i for i in live if i not in seen]
+    if complete and len(absent) > len(live) * max_missing:
+        raise SyncError(
+            "Large destination shrink; nothing deleted. Review Flighty and the retained snapshot."
+        )
     counts = {
         "source_rows": len(rows),
         "inserted": 0,
         "updated": 0,
         "unchanged": 0,
-        "tombstones": 0,
+        "restored": 0,
+        "deleted": 0,
         "missing": 0,
         "archive_key": key,
         "observed_at": observed,
@@ -124,9 +139,6 @@ def sync_flights(hub, rows, *, table, prefix):
     expected = {}
     for row in rows:
         old = existing.get(row["id"])
-        if old and old.get("deleted_at"):
-            counts["tombstones"] += 1
-            continue
         if old is None:
             new = {**row, "source_archive_key": key, "updated_at": observed}
             receipt = hub.post(
@@ -149,20 +161,28 @@ def sync_flights(hub, rows, *, table, prefix):
             for k, v in row.items()
             if k not in ("id", "source_id", "travel_status") and old.get(k) != v
         }
-        if changes:
+        if old.get("deleted_at"):
+            # Back in Flighty: restore with fresh source fields; user-owned fields stay.
+            values = {**changes, "deleted_at": None, "source_archive_key": key}
+            hub.push(table, {"id": row["id"], "updated_at": utc_now(), **values})
+            counts["restored"] += 1
+            expected[row["id"]] = values
+        elif changes:
             changes["source_archive_key"] = key
             hub.patch(table, old, changes)
             counts["updated"] += 1
             expected[row["id"]] = changes
         else:
             counts["unchanged"] += 1
-    seen = {r["id"] for r in rows}
-    for identifier, old in existing.items():
-        if (
-            identifier not in seen
-            and not old.get("deleted_at")
-            and old.get("source_state") != "missing"
-        ):
+    for identifier in absent:
+        old = existing[identifier]
+        if complete:
+            stamp = utc_now()
+            values = {"deleted_at": stamp, "source_state": "missing", "source_archive_key": key}
+            hub.push(table, {"id": identifier, "updated_at": stamp, **values})
+            counts["deleted"] += 1
+            expected[identifier] = values
+        elif old.get("source_state") != "missing":
             values = {"source_state": "missing", "source_archive_key": key}
             hub.patch(table, old, values)
             counts["missing"] += 1

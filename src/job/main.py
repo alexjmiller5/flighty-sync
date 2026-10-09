@@ -191,7 +191,14 @@ def main(argv=None):
                     )
                 )
                 return 0
-            result = sync_flights(hub, rows, table=settings.table, prefix=settings.archive_prefix)
+            result = sync_flights(
+                hub,
+                rows,
+                table=settings.table,
+                prefix=settings.archive_prefix,
+                complete=rows.complete,
+                max_missing=settings.max_missing_fraction,
+            )
         finally:
             hub.close()
         result.update(state="success", freshness="local_cache_only")

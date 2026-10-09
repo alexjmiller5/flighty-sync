@@ -48,8 +48,17 @@ class Service:
             return httpx.Response(
                 200, json={"inserted": [row["id"]], "existing": [], "rejected": []}
             )
+        if path.endswith("/push"):
+            # Sparse last-write-wins, like the hub: stale rows are accepted unchanged.
+            for pushed in data["rows"]:
+                stored = self.rows[pushed["id"]]
+                if pushed["updated_at"] > stored["updated_at"]:
+                    stored.update({c: pushed[c] for c in data["columns"] if c in pushed})
+            return httpx.Response(200, json={"upserted": len(data["rows"]), "rejected": []})
         if path.endswith("/patch"):
-            if self.conflict:
+            if "deleted_at" in data["values"]:
+                return httpx.Response(400, json={"error": "invalid_patch"})
+            if self.conflict or self.rows[data["id"]].get("deleted_at"):
                 return httpx.Response(409, json={"error": "conflict"})
             self.rows[data["id"]].update(data["values"])
             return httpx.Response(
@@ -100,17 +109,79 @@ def test_archive_before_writes_idempotency_and_preserve_user_fields():
     assert service.rows["flight"]["txn_links"] == "owned"
 
 
-def test_paginate_and_preserve_tombstone_and_missing_source():
+def stored(identifier, **values):
+    clock = "2026-01-01T00:00:00.000Z"
+    return {**row(identifier), "updated_at": clock, "hub_at": clock, "deleted_at": None, **values}
+
+
+def mirror(hub, identifiers, complete=True):
+    rows = [row(i) for i in identifiers]
+    return sync_flights(hub, rows, table="flights", prefix="raw/flighty/", complete=complete)
+
+
+def test_absent_flight_is_soft_deleted_with_user_fields_kept():
     service, hub = setup()
-    service.rows = {
-        "a": dict(row("a"), updated_at="x", hub_at="y", deleted_at="gone"),
-        "z": dict(row("z"), updated_at="x", hub_at="y", deleted_at=None),
-    }
-    result = sync_flights(hub, [row("a")], table="flights", prefix="raw/flighty/")
-    assert result["tombstones"] == 1
-    assert service.rows["a"]["deleted_at"] == "gone"
-    assert service.rows["z"]["source_state"] == "missing"
-    assert service.rows["z"]["deleted_at"] is None
+    service.rows = {i: stored(i) for i in "abcdefgh"}
+    service.rows["a"]["source_state"] = "missing"
+    service.rows["b"].update(travel_status="confirmed", trip_id="trip", notes="kept")
+    # Two of eight is exactly the 25% shrink limit, which is still allowed.
+    result = mirror(hub, "cdefgh")
+    assert result["deleted"] == 2
+    for gone in (service.rows["a"], service.rows["b"]):
+        assert gone["deleted_at"] is not None
+        assert gone["deleted_at"] == gone["updated_at"]
+        assert gone["source_state"] == "missing"
+        assert gone["source_archive_key"] == result["archive_key"]
+    b = service.rows["b"]
+    assert (b["travel_status"], b["trip_id"], b["notes"]) == ("confirmed", "trip", "kept")
+    assert all(service.rows[i]["deleted_at"] is None for i in "cdefgh")
+    assert mirror(hub, "cdefgh")["deleted"] == 0
+
+
+def test_reappearing_flight_is_restored_with_fresh_source_and_user_fields():
+    service, hub = setup()
+    service.rows["a"] = stored(
+        "a",
+        flight_number="old",
+        source_state="missing",
+        deleted_at="2026-01-01T00:00:00.000Z",
+        travel_status="not_flown",
+        trip_id="trip",
+        notes="kept",
+    )
+    result = mirror(hub, "a")
+    a = service.rows["a"]
+    assert result["restored"] == 1
+    assert a["deleted_at"] is None
+    assert (a["source_state"], a["flight_number"]) == ("present", "12")
+    assert a["source_archive_key"] == result["archive_key"]
+    assert (a["travel_status"], a["trip_id"], a["notes"]) == ("not_flown", "trip", "kept")
+
+
+def test_restore_refuses_a_conflicting_source_identity():
+    service, hub = setup()
+    service.rows["a"] = stored("a", source_id="other", deleted_at="2026-01-01T00:00:00.000Z")
+    with pytest.raises(SyncError, match="identity"):
+        mirror(hub, "a")
+    assert service.rows["a"]["deleted_at"] is not None
+
+
+def test_shrink_over_limit_stops_before_any_row_write():
+    service, hub = setup()
+    service.rows = {i: stored(i) for i in "abcdefgh"}
+    with pytest.raises(SyncError, match="shrink"):
+        mirror(hub, "defgh" + "z")
+    assert not any(c[1].endswith(("/insert", "/patch", "/push")) for c in service.calls)
+    assert all(r["deleted_at"] is None for r in service.rows.values())
+
+
+def test_incomplete_read_marks_missing_but_deletes_nothing():
+    service, hub = setup()
+    service.rows = {i: stored(i) for i in "ab"}
+    result = mirror(hub, "b", complete=False)
+    assert (result["deleted"], result["missing"]) == (0, 1)
+    assert service.rows["a"]["deleted_at"] is None
+    assert service.rows["a"]["source_state"] == "missing"
 
 
 def test_empty_and_duplicate_source_fail_before_network():

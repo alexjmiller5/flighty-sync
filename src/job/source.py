@@ -12,6 +12,14 @@ class SourceError(RuntimeError):
     pass
 
 
+class Snapshot(list):
+    """Source rows; complete only when every personal flight table was read."""
+
+    def __init__(self, rows, complete):
+        super().__init__(rows)
+        self.complete = complete
+
+
 class SourceRow(dict):
     """Honor SQLite column-name casing while preserving original source keys."""
 
@@ -75,7 +83,7 @@ def stamp(value):
     )
 
 
-def read_flights(path: Path) -> list[dict]:
+def read_flights(path: Path) -> Snapshot:
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise SourceError("Flighty source is missing; open Flighty and finish native sync first.")
@@ -211,6 +219,7 @@ def read_flights(path: Path) -> list[dict]:
                         "travel_status": "unverified",
                     }
                 )
-            return result
+            # Without the manual tables, manual removals are indistinguishable from drift.
+            return Snapshot(result, complete=manual)
     except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
         raise SourceError(f"Cannot read a complete Flighty snapshot: {type(exc).__name__}") from exc

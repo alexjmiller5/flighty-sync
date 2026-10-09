@@ -148,3 +148,10 @@ def test_manual_known_carrier_number_and_time_are_preserved(tmp_path):
     assert row["flight_number"] == "ZZ 42"
     assert row["airline_iata"] == "ZZ"
     assert row["departure_scheduled_at"] == "2024-01-02T00:30:00.000Z"
+
+
+def test_snapshot_is_complete_only_when_manual_tables_were_read(tmp_path):
+    (tmp_path / "searched").mkdir()
+    (tmp_path / "manual").mkdir()
+    assert read_flights(source(tmp_path / "searched")).complete is False
+    assert read_flights(manual_source(tmp_path / "manual")).complete is True
