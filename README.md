@@ -1,6 +1,6 @@
 # Flighty Sync
 
-A read-only mirror of your local Flighty flights into your own Life Data service,
+A read-only mirror of your local Flighty flights into your own Soma service,
 with independently retained, byte-verified source snapshots. No analytics.
 
 Flighty Sync uses Flighty's private macOS SQLite schema. It is not affiliated
@@ -35,7 +35,7 @@ sign-in and Full Disk Access grants cannot be supplied by Nix.
    flighty-sync scopes
    ```
 
-3. Have the Life Data operator provision the destination catalog and mint a
+3. Have the Soma operator provision the destination catalog and mint a
    dedicated consumer token with **exactly** the grants printed by `scopes`.
    Current defaults are `tables:read:flights`, `tables:write:flights`, and
    `files:read:raw/flighty/`, `files:write:raw/flighty/`. Configure table/file
@@ -77,13 +77,13 @@ retain unknown carrier, number and times as null. A manual midnight departure
 with no arrival or actual departure time is treated as a date marker, with an
 explicit warning and its original timestamp retained in the raw snapshot.
 
-Life Data operators create/catalog the destination through supported user
-interfaces, not by changing the Life Data repository. `txns` can be a union
+Soma operators create/catalog the destination through supported user
+interfaces, not by changing the Soma repository. `txns` can be a union
 view with composite identity; purchase links must retain both source and source
 record ID rather than assuming a universal transaction ID. Keep transaction
 links separate so purchases, fees and refunds can all be represented.
 
-The required service APIs are documented by Life Data: `/v1/session`, retained
+The required service APIs are documented by Soma: `/v1/session`, retained
 files, complete paginated row pulls, insert-only creation, and revision-checked
 patches. Failed archives, rejections, schema drift, missing credentials and
 revision conflicts fail visibly. A rerun reconciles partial completed work.

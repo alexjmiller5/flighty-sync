@@ -1,4 +1,4 @@
-"""Life Data public file/row APIs; no replica or infrastructure access."""
+"""Soma public file/row APIs; no replica or infrastructure access."""
 
 import hashlib
 import json

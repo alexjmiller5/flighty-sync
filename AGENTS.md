@@ -36,9 +36,9 @@ tests/runner.nix; it executes credential-free, successful and failed-command cas
 
 The source database is private Flighty state and is read-only. Never migrate or
 write its tables. The archive and flights table belong to the user-configured
-Life Data service, accessed through its file and row APIs with exact grants.
+Soma service, accessed through its file and row APIs with exact grants.
 This project owns its package, launchd wrapper, native Keychain credential and
-local status/configuration. It does not own Life Data infrastructure or schema.
+local status/configuration. It does not own Soma infrastructure or schema.
 
 Do not log source payloads or tokens. Fixtures are synthetic. Preserve human-owned
 trip, purchase and travel-status fields. Archive readback precedes row writes;
