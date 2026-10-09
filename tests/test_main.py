@@ -58,3 +58,41 @@ def test_only_run_starts_flighty_before_reading(monkeypatch, tmp_path, command):
             ),
         )
     assert calls == expected
+
+
+def test_move_hub_carries_the_credential_and_baseline_to_the_new_url(monkeypatch, tmp_path):
+    import json
+    import job.main as cli
+    from job.credentials import account
+
+    old, new = "https://old.test", "https://new.test"
+    (tmp_path / "config.json").write_text(json.dumps({"hub_url": old}))
+    (tmp_path / "verification.json").write_text(
+        json.dumps({"hub_url": old, "source": "x", "source_rows": 3})
+    )
+    tokens = {account(old): "device-token"}
+    sessions = []
+
+    class Hub:
+        def __init__(self, url, token):
+            sessions.append((url, token))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "load_settings",
+        lambda: Settings.model_validate_json((tmp_path / "config.json").read_text()),
+    )
+    monkeypatch.setattr(cli, "Hub", Hub)
+    monkeypatch.setattr(cli, "check_session", lambda hub, settings: None)
+    monkeypatch.setattr(cli, "read_token", lambda key: tokens[key])
+    monkeypatch.setattr(cli, "store_token", lambda key, token: tokens.__setitem__(key, token))
+    monkeypatch.setattr(cli, "delete_token", lambda key: tokens.pop(key))
+    assert cli.main(["move-hub", "--hub-url", new]) == 0
+    assert sessions == [(new, "device-token")]
+    assert tokens == {account(new): "device-token"}
+    assert json.loads((tmp_path / "config.json").read_text())["hub_url"] == new
+    assert json.loads((tmp_path / "verification.json").read_text())["hub_url"] == new

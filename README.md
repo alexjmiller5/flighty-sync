@@ -50,6 +50,11 @@ sign-in and Full Disk Access grants cannot be supplied by Nix.
    destination records. Test another source change made through Flighty's UI
    and check that the mini receives it before relying on unattended freshness.
 
+When the same service moves to a new URL, run `flighty-sync move-hub --hub-url
+<new-url>` from the logged-in desktop: the enrolled credential must pass the exact
+grant check there, then the configuration, Keychain entry and verified-export
+baseline follow it.
+
 Repeat native enrollment after replacing a Mac or resetting its Keychain. The
 source/export verification is bound to the configured source path and service
 URL. Changing either requires another export comparison. A source shrink over

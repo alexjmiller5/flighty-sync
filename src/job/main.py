@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from job.config import Settings, load_settings, save_json, state_dir
-from job.credentials import account, read_token, store_token
+from job.credentials import account, delete_token, read_token, store_token
 from job.source import read_flights
 from job.sync import Hub, SyncError, sync_flights, utc_now
 
@@ -61,6 +61,10 @@ def main(argv=None):
     commands.add_parser(
         "doctor", help="Check source baseline and destination credential without writes"
     )
+    move = commands.add_parser(
+        "move-hub", help="Follow the same service to a new URL with the enrolled credential"
+    )
+    move.add_argument("--hub-url", required=True)
     commands.add_parser("run", help="Run one complete snapshot, archive and mirror cycle")
     commands.add_parser("status")
     args = parser.parse_args(argv)
@@ -88,6 +92,27 @@ def main(argv=None):
                 if (state / "status.json").exists()
                 else json.dumps({"state": "not_run"})
             )
+            return 0
+        if args.command == "move-hub":
+            # The enrolled credential passing the exact-grant check there proves the same service.
+            old = settings.hub_url
+            token = os.environ.get("FLIGHTY_SYNC_TOKEN") or read_token(account(old))
+            settings = settings.model_copy(update={"hub_url": args.hub_url})
+            hub = Hub(settings.hub_url, token)
+            try:
+                check_session(hub, settings)
+            finally:
+                hub.close()
+            store_token(account(settings.hub_url), token)
+            save_json(state / "config.json", settings.model_dump(mode="json"))
+            proof = state / "verification.json"
+            if proof.exists():
+                baseline = json.loads(proof.read_text())
+                if baseline["hub_url"] == old:
+                    save_json(proof, {**baseline, "hub_url": settings.hub_url})
+            if account(old) != account(settings.hub_url):
+                delete_token(account(old))
+            print(json.dumps({"moved": True, "hub_url": settings.hub_url}))
             return 0
         if args.command == "login":
             token = sys.stdin.read().strip()

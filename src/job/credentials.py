@@ -36,3 +36,11 @@ def store_token(key, token):
     )
     if result.returncode or read_token(key) != token:
         raise RuntimeError("Keychain enrollment failed; use the logged-in mini desktop.")
+
+
+def delete_token(key):
+    subprocess.run(
+        ["/usr/bin/security", "delete-generic-password", "-s", SERVICE, "-a", key],
+        capture_output=True,
+        timeout=10,
+    )
