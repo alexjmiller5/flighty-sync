@@ -29,7 +29,7 @@ sign-in and Full Disk Access grants cannot be supplied by Nix.
 2. Configure this consumer through its installed interface:
 
    ```sh
-   flighty-sync configure --hub-url https://your-life-service.example
+   flighty-sync configure --hub-url https://your-soma-service.example
    flighty-sync inspect
    flighty-sync verify-export /path/to/FlightyExport.csv
    flighty-sync scopes
